@@ -7,7 +7,7 @@ const HOUR = 60 * 60 * 1000;
 
 await connectDb();
 
-startServer(config.port, undefined, () => {
+startServer(config.port, config.host, () => {
   console.log(`ICECLUB API on port ${config.port}, database "${config.dbName}"`);
   if (config.demoOtp) console.log('Demo OTP is ON. Turn it off before real customers use this.');
   if (config.demoPayments) console.log('Demo payments are ON. Turn them off before real customers use this.');

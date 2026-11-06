@@ -31,7 +31,7 @@ export function createApp() {
   app.set('trust proxy', 1);
   app.use(helmet());
   // Mobile apps send no Origin header, so this list only concerns browsers.
-  app.use(cors({ origin: (origin, done) => done(null, !origin || config.corsOrigins.includes(origin)) }));
+  app.use(cors({ origin: (origin, done) => done(null, !origin || config.corsOrigins.includes('*') || config.corsOrigins.includes(origin)) }));
   app.use(compression());
   app.use(express.json({ limit: '1mb' }));
   app.use(rejectOperators);

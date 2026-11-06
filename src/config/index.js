@@ -24,6 +24,8 @@ export const config = {
   mongoUri: process.env.MONGODB_URI,
   dbName,
   port: Number(process.env.PORT || 4000),
+  // 127.0.0.1 behind a proxy such as nginx, so the port isn't reachable from outside.
+  host: process.env.HOST || undefined,
   dnsServers: list(process.env.DNS_SERVERS),
   corsOrigins: list(process.env.CORS_ORIGINS),
   jwtSecret: process.env.JWT_SECRET,
