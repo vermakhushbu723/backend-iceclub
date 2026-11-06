@@ -1,4 +1,4 @@
-import { Factory, Offer, Order, Product } from '../../models/index.js';
+import { Factory, Order, Product } from '../../models/index.js';
 import { nextOrderNumber } from '../counter.service.js';
 import { addLedger, creditSummary, lockDealer } from '../ledger.service.js';
 import { logActivity, notify, notifyAdmin } from '../notification.service.js';
@@ -18,17 +18,7 @@ export function dealerBill(lines, charges, discountAsked = 0) {
   return { subtotal: round2(subtotal), discount: round2(discount), gst: round2(gst), deliveryFee, total: round2(subtotal - discount + gst + deliveryFee) };
 }
 
-const offerDiscount = (offer, subtotal) => {
-  if (subtotal < offer.minOrder) return 0;
-  const value = offer.percent > 0 ? (subtotal * offer.percent) / 100 : offer.flatOff;
-  return offer.maxDiscount > 0 ? Math.min(value, offer.maxDiscount) : value;
-};
 
-export async function dealerOffer(dealer, code) {
-  const offer = await Offer.findOne({ audience: 'dealer', code, active: true, validTill: { $gte: new Date() } }).lean();
-  need(offer && (!offer.tier || offer.tier === dealer.tier), 'That coupon code is not valid');
-  return offer;
-}
 
 export async function linesFromItems(items, rateOf, audience) {
   need(Array.isArray(items), 'Add at least one product');
@@ -68,16 +58,8 @@ export async function placeDealerOrder(dealer, input, by = 'app') {
   }
 
   const charges = await setting('charges');
-  let discount = 0;
-  let couponCode = null;
-  if (str(input.couponCode, 30)) {
-    const offer = await dealerOffer(dealer, str(input.couponCode, 30).toUpperCase());
-    const subtotal = lines.reduce((sum, l) => sum + l.qty * l.rate, 0);
-    need(subtotal >= offer.minOrder, `Coupon ${offer.code} needs an order of ₹${offer.minOrder} or more`);
-    discount = offerDiscount(offer, subtotal);
-    couponCode = offer.code;
-  }
-  const bill = dealerBill(lines, charges, discount);
+  need(!str(input.couponCode, 30), 'Coupon codes are only for the Customer App');
+  const bill = dealerBill(lines, charges);
   need(bill.subtotal >= charges.minOrder, `The minimum order value is ₹${charges.minOrder}`);
 
   // The app shows a bill from its own copy of the prices. Never charge a different amount without asking.
@@ -108,7 +90,7 @@ export async function placeDealerOrder(dealer, input, by = 'app') {
     lines,
     itemTotal: bill.subtotal,
     ...bill,
-    couponCode,
+    couponCode: null,
     paymentMethod: method,
     paymentStatus: { credit: 'onCredit', online: 'paid', cod: 'pending' }[method],
     deliveryDate: new Date(input.deliveryDate),

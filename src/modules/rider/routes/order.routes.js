@@ -94,7 +94,7 @@ router.post('/orders/:id/complete', async (req, res) => {
   const body = await tx(async () => {
     const order = await mine(req);
     need(order.status === 'outForDelivery', 'This order has already been completed.');
-    await completeDelivery(order, { ...req.body, location: geo(req.body.location) });
+    await completeDelivery(order, { ...req.body, byRider: true, location: geo(req.body.location) });
     return respond(req, order);
   });
   res.json(body);

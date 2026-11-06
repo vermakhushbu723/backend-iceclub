@@ -29,6 +29,7 @@ export function riderOrder(req, o, buyer, attempt) {
     slot: o.slot,
     payment: RIDER_PAYMENT[o.paymentMethod],
     deliveryOtp: '',
+    otpRequired: o.buyerType === 'customer',
     events: a.riderEvents,
     notes: o.notes ?? '',
     pickup: recordOut(req, a.pickup),

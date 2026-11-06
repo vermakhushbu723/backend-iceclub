@@ -67,7 +67,7 @@ async function dispatch(order) {
   await order.save();
   await logActivity(`${order.number} dispatched with ${rider?.name}`);
   await notifyAdmin('delivery', 'Order dispatched', `${order.number} left with ${rider?.name}.`, '/tracking');
-  await tellBuyer(order, 'delivery', `${order.number}: Out for delivery`, `Your order is on the way. Share OTP ${order.otp} with the rider.`);
+  await tellBuyer(order, 'delivery', `${order.number}: Out for delivery`, needsOtp(order) ? `Your order is on the way. Share OTP ${order.otp} with the rider.` : 'Your order is on the way.');
 }
 
 export async function advanceOrder(order) {
@@ -122,6 +122,9 @@ export async function cancelOrder(order, reason, { allowed = CANCELLABLE, by = '
   return order;
 }
 
+/** Customers share an OTP with the rider. Dealers don't: a photo proves their delivery. */
+export const needsOtp = (order) => order.buyerType === 'customer';
+
 /**
  * The buyer's OTP proves the delivery. Wrong guesses are limited, so it can't be tried until it works.
  * Call this before the transaction: a failed transaction would undo the count of wrong guesses.
@@ -129,6 +132,7 @@ export async function cancelOrder(order, reason, { allowed = CANCELLABLE, by = '
 export async function checkDeliveryOtp(orderId, otp) {
   const order = await findOrder(orderId);
   need(order.status === 'outForDelivery', 'Only an order out for delivery can be confirmed');
+  if (!needsOtp(order)) return;
   need(order.otpAttempts < MAX_OTP_ATTEMPTS, 'Too many wrong OTPs for this order. Please contact your admin.', 429);
   if (str(otp, 10) !== order.otp) {
     await Order.updateOne({ _id: order._id }, { $inc: { otpAttempts: 1 } });
@@ -151,6 +155,9 @@ export async function completeDelivery(order, input) {
     need(qty <= (dispatched[line.productId] ?? line.qty), `You can't deliver more ${line.name} than was loaded`);
     delivered[line.productId] = qty;
   }
+  const photos = photosFrom(input.photos);
+  // A dealer gives no OTP, so the rider's photo is the proof of delivery.
+  if (input.byRider && !needsOtp(order)) need(photos.length > 0, 'Take a photo of the delivered goods');
   const at = new Date();
   const ratios = amountPerUnit(order);
   const due = round2(order.lines.reduce((sum, l) => sum + ratios[l.productId] * delivered[l.productId], 0));
@@ -174,11 +181,11 @@ export async function completeDelivery(order, input) {
   const slots = await setting('slots');
   order.delivery = {
     at,
-    otpConfirmed: true,
+    otpConfirmed: needsOtp(order),
     receivedBy: str(input.receivedBy, 80),
     onTime: onTimeFor(order, at, slots),
     delivered,
-    photos: photosFrom(input.photos, at),
+    photos,
     remark: str(input.remark, 300),
     location: input.location ?? null,
     collected,

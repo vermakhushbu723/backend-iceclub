@@ -36,7 +36,8 @@ export const productActions = {
     const audience = values.audience === 'customer' ? 'customer' : 'dealer';
     const code = str(values.code, 30).toUpperCase();
     const kind = str(values.kind, 20) || 'current';
-    if (kind !== 'scheme') need(code, 'Enter the coupon code');
+    if (audience === 'dealer') need(!code, 'Coupon codes are only for customers. Leave the code empty for a dealer offer.');
+    else need(code, 'Enter the coupon code');
     const id = str(values.id, 60);
     if (code) need(!(await Offer.exists({ code, audience, _id: { $ne: id } })), 'This code is already in use');
     const validTill = new Date(values.validTill);

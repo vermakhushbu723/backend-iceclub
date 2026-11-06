@@ -42,11 +42,7 @@ const rename = ({ id, ...rest }) => ({ _id: id, ...rest });
 
 const inAMonth = () => dayjs().add(60, 'day').toDate();
 const offers = () => [
-  { _id: 'OF1', audience: 'dealer', kind: 'current', code: 'BULK10', title: '10% off bulk orders', description: 'On orders of ₹10,000 or more. Maximum discount ₹2,000.', percent: 10, maxDiscount: 2000, minOrder: 10000, validTill: inAMonth() },
-  { _id: 'OF2', audience: 'dealer', kind: 'current', code: 'ICE5', title: '5% off your order', description: 'On orders of ₹2,000 or more. Maximum discount ₹500.', percent: 5, maxDiscount: 500, minOrder: 2000, validTill: inAMonth() },
   { _id: 'OF3', audience: 'dealer', kind: 'scheme', code: '', title: 'Monthly volume scheme', description: "Buy 500 bags in a month and get a 2% credit note on that month's purchases.", validTill: inAMonth() },
-  { _id: 'OF4', audience: 'dealer', kind: 'specialDiscount', code: 'GOLD3', tier: 'Gold', title: 'Special discount for Gold dealers', description: '3% off on orders of ₹5,000 or more. Maximum discount ₹1,000.', percent: 3, maxDiscount: 1000, minOrder: 5000, validTill: inAMonth() },
-  { _id: 'OF5', audience: 'dealer', kind: 'specialDiscount', code: 'SILVER3', tier: 'Silver', title: 'Special discount for Silver dealers', description: '3% off on orders of ₹5,000 or more. Maximum discount ₹1,000.', percent: 3, maxDiscount: 1000, minOrder: 5000, validTill: inAMonth() },
   { _id: 'OF6', audience: 'customer', code: 'FIRST50', title: '₹50 off your order', description: 'On orders of ₹299 or more.', minOrder: 299, flatOff: 50, validTill: inAMonth() },
   { _id: 'OF7', audience: 'customer', code: 'COOL10', title: '10% off', description: 'Up to ₹100 off on orders of ₹199 or more.', minOrder: 199, percent: 10, maxDiscount: 100, validTill: inAMonth() },
   { _id: 'OF8', audience: 'customer', code: 'FREEDEL', title: 'Free delivery', description: 'On orders of ₹149 or more.', minOrder: 149, freeDelivery: true, validTill: inAMonth() },

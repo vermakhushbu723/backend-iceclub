@@ -63,7 +63,7 @@ export function dealerOrder(o, rider) {
     paymentMethod: DEALER_METHOD[o.paymentMethod],
     paymentStatus: o.paymentStatus,
     events: o.events,
-    deliveryOtp: o.otp,
+    deliveryOtp: '',
     couponCode: o.couponCode,
     notes: o.notes ?? '',
     driver: rider ? { name: rider.name, phone: rider.phone, vehicle: rider.vehicleNumber ?? '' } : null,

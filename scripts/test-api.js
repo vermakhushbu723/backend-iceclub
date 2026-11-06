@@ -250,7 +250,7 @@ try {
   okIs('place a credit order', placed);
   const o1 = placed.data;
   check('order total includes GST and delivery', o1.total === 2315 && o1.gst === 315 && o1.deliveryFee === 250, o1);
-  check('the dealer sees their OTP', /^\d{4}$/.test(o1.deliveryOtp));
+  check('dealers get no delivery OTP', o1.deliveryOtp === '');
   let summary = (await dealerApi.get('/dealer/credit-summary')).data;
   check('credit order goes on the ledger', summary.outstanding === 2315 && summary.available === 17685, summary);
   check('ledger lists the invoice', (await dealerApi.get('/dealer/ledger')).data[0]?.reference === o1.number.replace('ICE', 'INV'));
@@ -266,14 +266,10 @@ try {
   check('cancelling gives the credit back', (await dealerApi.get('/dealer/credit-summary')).data.outstanding === 2315);
   await act('setCredit', dealerId, 20000, 15);
 
-  section('Coupons on dealer orders');
-  refused('unknown coupon', await dealerApi.post('/dealer/orders', orderBody(5, 'credit', { couponCode: 'NOPE' })), 400, 'not valid');
-  refused('coupon minimum', await dealerApi.post('/dealer/orders', orderBody(3, 'credit', { couponCode: 'BULK10' })), 400);
-  refused('a Gold coupon is not for a Standard dealer', await dealerApi.post('/dealer/orders', orderBody(5, 'credit', { couponCode: 'GOLD3' })), 400);
-  check('offers are for this dealer tier', !(await dealerApi.get('/dealer/offers')).data.some((x) => x.code === 'GOLD3') && (await demo.get('/dealer/offers')).data.some((x) => x.code === 'GOLD3'));
-  const couponOrder = await dealerApi.post('/dealer/orders', orderBody(8, 'cashOnDelivery', { couponCode: 'ICE5' }));
-  okIs('coupon order', couponOrder);
-  check('discount applied before GST', couponOrder.data.discount === 140 && couponOrder.data.gst === 478.8, couponOrder.data);
+  section('No coupons for dealers');
+  refused('dealers cannot use coupon codes', await dealerApi.post('/dealer/orders', orderBody(8, 'cashOnDelivery', { couponCode: 'FIRST50' })), 400, 'Customer App');
+  check('dealer offers carry no codes', (await demo.get('/dealer/offers')).data.every((x) => x.code === '') && (await demo.get('/dealer/offers')).data.length > 0);
+  refused('a dealer offer cannot have a code', await act('saveOffer', { title: 'X', audience: 'dealer', code: 'DEAL5', validTill: tomorrow }), 400, 'only for customers');
 
   section('Location pricing');
   okIs('set a location price', await act('setLocationPrice', 'business', 'block-50', 300));
@@ -338,7 +334,9 @@ try {
   let riderOrders = (await rider.get('/rider/orders')).data;
   let ro = riderOrders.find((x) => x.id === o1.id);
   check('the rider sees the order', ro?.events.at(-1).status === 'assigned', ro);
-  check('the rider is never sent the OTP', ro.deliveryOtp === '' && !JSON.stringify(riderOrders).includes(o1.deliveryOtp + '"'));
+  const realOtp = (await models.Order.findById(o1.id).lean()).otp;
+  check('the rider is never sent the OTP', ro.deliveryOtp === '' && !JSON.stringify(riderOrders).includes(`"${realOtp}"`));
+  check('a dealer order needs no OTP from the rider', ro.otpRequired === false);
   check('rider sees what to collect per unit', ro.items[0].rate > 350);
   refused('pickup needs accept first', await rider.post(`/rider/orders/${o1.id}/pickup`, {}), 400);
   okIs('rider accepts', await rider.post(`/rider/orders/${o1.id}/accept`));
@@ -366,19 +364,27 @@ try {
 
   section('Delivery OTP');
   const otherRider = api((await call('POST', `${OPEN('rider')}/otp/verify`, { body: { phone: (await models.Rider.findById('R2').lean()).phone, otp: await (async () => { await call('POST', `${OPEN('rider')}/otp/send`, { body: { phone: (await models.Rider.findById('R2').lean()).phone } }); return '123456'; })() } })).data.token);
-  refused("a rider cannot touch another rider's order", await otherRider.post(`/rider/orders/${o1.id}/complete`, { otp: o1.deliveryOtp }), 404);
-  refused('wrong delivery OTP', await rider.post(`/rider/orders/${o1.id}/complete`, { otp: '0000' }), 400, 'Incorrect OTP');
-  check('wrong tries are counted', (await models.Order.findById(o1.id).lean()).otpAttempts === 1);
-  const lockOrder = await dealerApi.post('/dealer/orders', orderBody(5, 'cashOnDelivery'));
-  for (let i = 0; i < 3; i += 1) await act('advanceOrder', lockOrder.data.id);
-  await act('assignRider', lockOrder.data.id, riderId);
-  await act('advanceOrder', lockOrder.data.id);
-  for (let i = 0; i < 5; i += 1) await rider.post(`/rider/orders/${lockOrder.data.id}/complete`, { otp: '0000' });
-  refused('the OTP locks after 5 wrong tries', await rider.post(`/rider/orders/${lockOrder.data.id}/complete`, { otp: lockOrder.data.deliveryOtp }), 429);
+  refused("a rider cannot touch another rider's order", await otherRider.post(`/rider/orders/${o1.id}/complete`, { photos: [{ path: photoPath, takenAt: new Date().toISOString() }] }), 404);
+  refused('a dealer delivery needs a photo', await rider.post(`/rider/orders/${o1.id}/complete`, {}), 400, 'photo');
+  // A customer's order still needs their OTP.
+  const ashaToken = (await call('POST', `${OPEN('customer')}/login`, { body: { phone: '9876500000', password: 'Customer@1234' } })).data.token;
+  const customerOut = async () => {
+    const made = await call('POST', '/customer/orders', { token: ashaToken, body: { addressId: 'CU1-A1', items: [{ productId: 'tube-5', qty: 3 }], deliveryDate: tomorrow, slot: SLOT, paymentMethod: 'cod' } });
+    for (let i = 0; i < 3; i += 1) await act('advanceOrder', made.data.id);
+    await act('assignRider', made.data.id, riderId);
+    await act('advanceOrder', made.data.id);
+    return made.data;
+  };
+  const lockOrder = await customerOut();
+  check('a customer order needs the OTP', (await rider.get('/rider/orders')).data.find((x) => x.id === lockOrder.id)?.otpRequired === true);
+  refused('wrong delivery OTP', await rider.post(`/rider/orders/${lockOrder.id}/complete`, { otp: '0000', photos: [{ path: photoPath, takenAt: new Date().toISOString() }] }), 400, 'Incorrect OTP');
+  check('wrong tries are counted', (await models.Order.findById(lockOrder.id).lean()).otpAttempts === 1);
+  for (let i = 0; i < 4; i += 1) await rider.post(`/rider/orders/${lockOrder.id}/complete`, { otp: '0000' });
+  refused('the OTP locks after 5 wrong tries', await rider.post(`/rider/orders/${lockOrder.id}/complete`, { otp: lockOrder.otp }), 429);
   const dealerBalance = (await dealerApi.get('/dealer/credit-summary')).data.outstanding;
-  refused('cannot deliver more than was loaded', await rider.post(`/rider/orders/${o1.id}/complete`, { otp: o1.deliveryOtp, delivered: { 'block-50': 5 } }), 400);
+  refused('cannot deliver more than was loaded', await rider.post(`/rider/orders/${o1.id}/complete`, { delivered: { 'block-50': 5 }, photos: [{ path: photoPath, takenAt: new Date().toISOString() }] }), 400);
   const stockAtDoor = await stock(factoryOf, 'block-50');
-  okIs('deliver 3 of the 4 loaded', await rider.post(`/rider/orders/${o1.id}/complete`, { otp: o1.deliveryOtp, delivered: { 'block-50': 3 }, receivedBy: 'Manager', photos: [{ path: photoPath, takenAt: new Date().toISOString() }], location: { latitude: 19.13, longitude: 72.86 } }));
+  okIs('deliver 3 of the 4 loaded', await rider.post(`/rider/orders/${o1.id}/complete`, { delivered: { 'block-50': 3 }, receivedBy: 'Manager', photos: [{ path: photoPath, takenAt: new Date().toISOString() }], location: { latitude: 19.13, longitude: 72.86 } }));
   check('what came back returns to stock', (await stock(factoryOf, 'block-50')) === stockAtDoor + 1);
   const afterShort = (await dealerApi.get('/dealer/credit-summary')).data.outstanding;
   check('short delivery comes off the bill', afterShort < dealerBalance, [dealerBalance, afterShort]);
@@ -398,12 +404,12 @@ try {
   await act('assignRider', cod.data.id, riderId);
   okIs('admin can dispatch directly', await act('advanceOrder', cod.data.id));
   const codBalance = (await dealerApi.get('/dealer/credit-summary')).data.outstanding;
-  refused('UPI needs a transaction ID', await rider.post(`/rider/orders/${cod.data.id}/complete`, { otp: cod.data.deliveryOtp, collected: cod.data.total, mode: 'upi' }), 400, 'UPI');
-  refused('cannot collect more than the bill', await rider.post(`/rider/orders/${cod.data.id}/complete`, { otp: cod.data.deliveryOtp, collected: cod.data.total + 500, mode: 'cash' }), 400);
+  refused('UPI needs a transaction ID', await rider.post(`/rider/orders/${cod.data.id}/complete`, { collected: cod.data.total, mode: 'upi', photos: [{ path: photoPath, takenAt: new Date().toISOString() }] }), 400, 'UPI');
+  refused('cannot collect more than the bill', await rider.post(`/rider/orders/${cod.data.id}/complete`, { collected: cod.data.total + 500, mode: 'cash', photos: [{ path: photoPath, takenAt: new Date().toISOString() }] }), 400);
   await models.Order.updateOne({ _id: cod.data.id }, { otpAttempts: 0 });
   await models.Collection.deleteMany({ riderId });
   await models.Handover.deleteMany({ riderId });
-  okIs('deliver and collect cash', await rider.post(`/rider/orders/${cod.data.id}/complete`, { otp: cod.data.deliveryOtp, collected: cod.data.total, mode: 'cash' }));
+  okIs('deliver and collect cash', await rider.post(`/rider/orders/${cod.data.id}/complete`, { collected: cod.data.total, mode: 'cash', photos: [{ path: photoPath, takenAt: new Date().toISOString() }] }));
   check('COD does not touch the credit balance', (await dealerApi.get('/dealer/credit-summary')).data.outstanding === codBalance);
   check('COD shows as paid', (await dealerApi.get('/dealer/orders')).data.find((x) => x.id === cod.data.id).paymentStatus === 'paid');
   let money = (await rider.get('/rider/collections')).data;
@@ -454,11 +460,12 @@ try {
   check('the failed try stays in rider history', (await rider.get('/rider/orders')).data.find((x) => x.id === rej.data.id)?.failure?.reason === 'Shop closed');
   okIs('assign to another rider', await act('assignRider', rej.data.id, 'R2'));
   okIs('admin dispatches the retry', await act('advanceOrder', rej.data.id));
-  const adminOtp = await dealerApi.get('/dealer/orders');
-  const otpOfRej = adminOtp.data.find((x) => x.id === rej.data.id).deliveryOtp;
   actionHits.add('confirmDelivery');
-  refused('admin confirm checks the OTP', await call('POST', '/admin/actions/confirmDelivery', { token: adminToken, body: { args: [rej.data.id, { otp: '0000', mode: 'cash' }] } }), 400);
-  okIs('admin confirms with the OTP', await call('POST', '/admin/actions/confirmDelivery', { token: adminToken, body: { args: [rej.data.id, { otp: otpOfRej, mode: 'cash', receivedBy: 'A' }] } }));
+  const confirm = (id, input) => call('POST', '/admin/actions/confirmDelivery', { token: adminToken, body: { args: [id, input] } });
+  okIs('admin confirms a dealer delivery without an OTP', await confirm(rej.data.id, { mode: 'cash', receivedBy: 'A' }));
+  const forAdmin = await customerOut();
+  refused('admin confirm checks a customer OTP', await confirm(forAdmin.id, { otp: '0000', mode: 'cash' }), 400);
+  okIs('admin confirms a customer delivery with the OTP', await confirm(forAdmin.id, { otp: forAdmin.otp, mode: 'cash' }));
 
   section('Admin order actions');
   refused('an order must be approved dealer', await act('createOrder', { dealerId: 'D11', addressId: 'D11-A1', items: [{ productId: 'block-50', qty: 5 }], paymentMethod: 'cod', deliveryDate: tomorrow, slot: SLOT, factoryId: 'F1' }), 400, 'not approved');
