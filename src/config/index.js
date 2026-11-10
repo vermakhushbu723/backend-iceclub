@@ -34,4 +34,6 @@ export const config = {
   demoPayments: process.env.ALLOW_DEMO_PAYMENTS === 'true',
   tokenDays: { admin: 1, dealer: 30, rider: 30, customer: 60 },
   maxUploadBytes: 8 * 1024 * 1024,
+  // Fuel top-up videos from riders: a short phone clip.
+  maxVideoBytes: 60 * 1024 * 1024,
 };

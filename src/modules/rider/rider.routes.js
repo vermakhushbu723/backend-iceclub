@@ -10,6 +10,7 @@ import collectionRoutes from './routes/collection.routes.js';
 import returnRoutes from './routes/return.routes.js';
 import trackingRoutes from './routes/tracking.routes.js';
 import factoryRoutes from './routes/factory.routes.js';
+import fuelRoutes from './routes/fuel.routes.js';
 
 /** Everything the Rider App calls. Each feature has its own file in ./routes. */
 export const rider = Router();
@@ -23,5 +24,6 @@ rider.use(collectionRoutes);
 rider.use(returnRoutes);
 rider.use(trackingRoutes);
 rider.use(factoryRoutes);
+rider.use(fuelRoutes);
 notificationRoutes(rider, 'rider');
 ticketRoutes(rider, 'rider');

@@ -10,7 +10,7 @@ import { ApiError, str } from '../../utils/http.js';
 
 export const files = Router();
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: config.maxUploadBytes, files: 1 } });
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: Math.max(config.maxUploadBytes, config.maxVideoBytes), files: 1 } });
 
 const bucket = () => new mongoose.mongo.GridFSBucket(mongoose.connection.db, { bucketName: 'uploads' });
 
@@ -20,6 +20,9 @@ function sniffType(buffer) {
   if (buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
   if (buffer.subarray(0, 4).toString() === 'RIFF' && buffer.subarray(8, 12).toString() === 'WEBP') return 'image/webp';
   if (buffer.subarray(0, 5).toString() === '%PDF-') return 'application/pdf';
+  // Phone videos: MP4 and iPhone MOV both start with an 'ftyp' box; Android browsers may record WebM.
+  if (buffer.subarray(4, 8).toString() === 'ftyp') return buffer.subarray(8, 10).toString() === 'qt' ? 'video/quicktime' : 'video/mp4';
+  if (buffer.subarray(0, 4).equals(Buffer.from([0x1a, 0x45, 0xdf, 0xa3]))) return 'video/webm';
   return null;
 }
 
@@ -41,7 +44,10 @@ async function anyAccount(req, _res, next) {
 files.post('/uploads', anyAccount, upload.single('file'), async (req, res) => {
   if (!req.file) throw new ApiError(400, 'Choose a file to upload');
   const contentType = sniffType(req.file.buffer);
-  if (!contentType) throw new ApiError(400, 'Only JPEG, PNG, WebP and PDF files can be uploaded');
+  if (!contentType) throw new ApiError(400, 'Only photos (JPEG, PNG, WebP), PDF files and videos (MP4, MOV, WebM) can be uploaded');
+  const isVideo = contentType.startsWith('video/');
+  if (!isVideo && req.file.size > config.maxUploadBytes) throw new ApiError(400, `That file is too large. Photos and PDF files can be up to ${config.maxUploadBytes / 1024 / 1024} MB.`);
+  if (isVideo && req.role !== 'rider' && req.role !== 'admin') throw new ApiError(400, 'Only photos and PDF files can be uploaded');
   const name = `${randomBytes(24).toString('hex')}`;
   await new Promise((resolve, reject) => {
     const stream = bucket().openUploadStream(name, { metadata: { contentType, ownerType: req.role, ownerId: req.user._id } });
@@ -56,6 +62,21 @@ files.get('/files/:name', async (req, res) => {
   const name = str(req.params.name, 60);
   const [file] = await bucket().find({ filename: name }).limit(1).toArray();
   if (!file) throw new ApiError(404, 'File not found');
-  res.set({ 'Content-Type': file.metadata?.contentType ?? 'application/octet-stream', 'Cache-Control': 'private, max-age=86400', 'X-Content-Type-Options': 'nosniff', 'Content-Disposition': 'inline', 'Cross-Origin-Resource-Policy': 'cross-origin' });
+  res.set({ 'Content-Type': file.metadata?.contentType ?? 'application/octet-stream', 'Cache-Control': 'private, max-age=86400', 'X-Content-Type-Options': 'nosniff', 'Content-Disposition': 'inline', 'Cross-Origin-Resource-Policy': 'cross-origin', 'Accept-Ranges': 'bytes' });
+  // Video players (Safari above all) ask for parts of the file and need a 206 reply.
+  const range = /^bytes=(\d*)-(\d*)$/.exec(req.get('range') ?? '');
+  if (range && (range[1] || range[2])) {
+    const size = file.length;
+    const start = range[1] ? Number(range[1]) : Math.max(size - Number(range[2]), 0);
+    const end = range[1] && range[2] ? Math.min(Number(range[2]), size - 1) : size - 1;
+    if (start >= size || start > end) {
+      res.status(416).set('Content-Range', `bytes */${size}`).end();
+      return;
+    }
+    res.status(206).set({ 'Content-Range': `bytes ${start}-${end}/${size}`, 'Content-Length': String(end - start + 1) });
+    bucket().openDownloadStreamByName(name, { start, end: end + 1 }).on('error', () => res.destroy()).pipe(res);
+    return;
+  }
+  res.set('Content-Length', String(file.length));
   bucket().openDownloadStreamByName(name).on('error', () => res.destroy()).pipe(res);
 });

@@ -1,13 +1,31 @@
-import { Attendance, Handover, Rider, SalaryPayment } from '../../../models/index.js';
+import { Attendance, FuelTopUp, Handover, Rider, SalaryPayment } from '../../../models/index.js';
 import { cashHeld } from '../admin.helpers.js';
 import { ACCOUNTS, DISPATCH } from '../admin.roles.js';
 import { riderRow } from '../admin.views.js';
 import { logActivity, notify } from '../../../services/notification.service.js';
 import { checkNewPassword, hashPassword } from '../../../services/password.service.js';
 import { dayKey } from '../../../utils/dates.js';
+import { fileUrl } from '../../../utils/urls.js';
 import { amount, bool, doc, need, newId, notFound, num, phoneOf, str } from '../../../utils/http.js';
 
 export const riderActions = {
+  /** Staff watch the rider's video from the pump, then approve or reject the fuel top-up. */
+  decideFuelTopUp: [[...ACCOUNTS, ...DISPATCH], async (req, id, approve, remark) => {
+    const row = await FuelTopUp.findById(str(id, 60));
+    if (!row) throw notFound('Fuel top-up');
+    need(row.status === 'pending', 'This top-up has already been decided');
+    const reason = str(remark, 300);
+    need(bool(approve) || reason, 'Enter why it is rejected');
+    row.status = bool(approve) ? 'approved' : 'rejected';
+    row.remark = reason;
+    row.decidedBy = req.user.name ?? req.user.email ?? '';
+    row.decidedAt = new Date();
+    await row.save();
+    await notify('rider', await Rider.findById(row.riderId).lean(), 'payment', bool(approve) ? 'Fuel top-up approved' : 'Fuel top-up rejected', bool(approve) ? `Your fuel of ₹${row.amount} (${row.litres} L) was approved.` : `Your fuel of ₹${row.amount} was rejected: ${reason}`);
+    await logActivity(`Fuel top-up of ${row.riderName} ${row.status}`, bool(approve) ? 'green' : 'red');
+    return { fuelTopUps: [{ ...doc(row.toObject()), video: fileUrl(req, row.video) }] };
+  }],
+
   saveRider: [DISPATCH, async (req, values) => {
     const name = str(values?.name, 80);
     need(name, 'Enter the rider name');

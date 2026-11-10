@@ -1,6 +1,6 @@
 import dayjs from 'dayjs';
-import { Customer, Dealer, DeliveryRequest, Enquiry, IceBoxMovement, IceBoxPickup, Ticket } from '../../../models/index.js';
-import { ACCOUNTS, ALL, DISPATCH } from '../admin.roles.js';
+import { Customer, Dealer, DeliveryRequest, Enquiry, FactoryPickup, IceBoxMovement, IceBoxPickup, Ticket } from '../../../models/index.js';
+import { ACCOUNTS, ALL, DISPATCH, FACTORY } from '../admin.roles.js';
 import { customerRow, ticketRow } from '../admin.views.js';
 import { notify } from '../../../services/notification.service.js';
 import { bool, doc, need, newId, notFound, str } from '../../../utils/http.js';
@@ -14,6 +14,26 @@ export const requestActions = {
     await row.save();
     await notify('dealer', await Dealer.findById(row.dealerId).lean(), 'delivery', approve ? 'Delivery confirmed' : 'Delivery request declined', `Your request for ${dayjs(row.date).format('D MMM')} was ${approve ? 'confirmed' : 'declined'}.`);
     return { deliveryRequests: [doc(row.toObject())] };
+  }],
+
+  /** Factory or dispatch staff confirm a dealer's pickup, then mark it collected; or decline it. */
+  updateFactoryPickup: [[...DISPATCH, ...FACTORY], async (req, id, status, note) => {
+    const row = await FactoryPickup.findById(str(id, 60));
+    if (!row) throw notFound('Factory pickup');
+    const next = str(status, 20);
+    const allowed = { requested: ['confirmed', 'declined'], confirmed: ['collected', 'declined'] }[row.status] ?? [];
+    need(allowed.includes(next), row.status === 'requested' || row.status === 'confirmed' ? 'That change is not allowed' : 'This pickup is already closed');
+    row.status = next;
+    row.staffNote = str(note, 300);
+    await row.save();
+    const day = dayjs(row.date).format('D MMM');
+    const text = {
+      confirmed: [`Factory pickup confirmed`, `Collect ${row.quantity} × ${row.productName} at ${row.factoryName} on ${day}, ${row.slot}.`],
+      collected: [`Factory pickup collected`, `${row.quantity} × ${row.productName} collected at ${row.factoryName}.`],
+      declined: [`Factory pickup declined`, `Your pickup for ${day} at ${row.factoryName} was declined.${row.staffNote ? ' ' + row.staffNote : ''}`],
+    }[next];
+    await notify('dealer', await Dealer.findById(row.dealerId).lean(), 'delivery', text[0], text[1]);
+    return { factoryPickups: [doc(row.toObject())] };
   }],
 
   completeBoxPickup: [DISPATCH, async (req, id, done) => {

@@ -12,6 +12,7 @@ import standingOrderRoutes from './routes/standing-order.routes.js';
 import iceBoxRoutes from './routes/ice-box.routes.js';
 import offerRoutes from './routes/offer.routes.js';
 import deliveryRequestRoutes from './routes/delivery-request.routes.js';
+import factoryPickupRoutes from './routes/factory-pickup.routes.js';
 
 /** Everything the Dealer App calls. Each feature has its own file in ./routes. */
 export const dealer = Router();
@@ -27,5 +28,6 @@ dealer.use(standingOrderRoutes);
 dealer.use(iceBoxRoutes);
 dealer.use(offerRoutes);
 dealer.use(deliveryRequestRoutes);
+dealer.use(factoryPickupRoutes);
 notificationRoutes(dealer, 'dealer');
 ticketRoutes(dealer, 'dealer');

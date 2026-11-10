@@ -3,7 +3,7 @@ import { ApiError } from '../utils/http.js';
 // Express knows an error handler by its four arguments.
 export function errorHandler(error, _req, res, _next) {
   if (error.name === 'MulterError') {
-    res.status(400).json({ error: error.code === 'LIMIT_FILE_SIZE' ? 'That file is too large. The limit is 8 MB.' : 'That file could not be uploaded' });
+    res.status(400).json({ error: error.code === 'LIMIT_FILE_SIZE' ? 'That file is too large. Photos can be up to 8 MB and videos up to 60 MB.' : 'That file could not be uploaded' });
     return;
   }
   if (error.type === 'entity.too.large' || error.type === 'entity.parse.failed') {

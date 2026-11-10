@@ -122,7 +122,7 @@ try {
   check('admin me', (await adminApi.get('/admin/me')).data.role === 'Super Admin');
   const boot = await adminApi.get('/admin/bootstrap');
   okIs('bootstrap', boot);
-  for (const key of ['company', 'charges', 'customerCharges', 'slots', 'tierRates', 'dealerPrices', 'locationPrices', 'products', 'factories', 'dealers', 'riders', 'customers', 'orders', 'ledger', 'collections', 'handovers', 'moves', 'attendance', 'complaints', 'activity', 'notifications', 'announcements', 'staff', 'paymentClaims', 'tickets', 'deliveryRequests', 'boxPickups', 'boxMovements', 'offers', 'enquiries', 'salaryPayments']) {
+  for (const key of ['company', 'charges', 'customerCharges', 'slots', 'tierRates', 'dealerPrices', 'locationPrices', 'products', 'factories', 'dealers', 'riders', 'customers', 'orders', 'ledger', 'collections', 'handovers', 'moves', 'attendance', 'complaints', 'activity', 'notifications', 'announcements', 'staff', 'paymentClaims', 'tickets', 'deliveryRequests', 'factoryPickups', 'boxPickups', 'boxMovements', 'offers', 'enquiries', 'salaryPayments']) {
     check(`bootstrap has ${key}`, boot.data[key] != null);
   }
   const bootText = JSON.stringify(boot.data);
@@ -437,6 +437,30 @@ try {
   refused('a month is paid once', await act('paySalary', riderId, month, 15000), 400);
   check('the rider sees the payment', (await rider.get('/rider/earnings/salaries')).data[1].paidOn);
 
+  section('Rider fuel top-ups');
+  const mp4 = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypisom'), Buffer.alloc(4000, 7)]);
+  refused('a dealer can not upload a video', await upload(demoLogin.data.token, mp4, 'a.mp4', 'video/mp4'), 400);
+  const clip = await upload(riderPass.data.token, mp4, 'fuel.mp4', 'video/mp4');
+  okIs('a rider uploads a video', clip);
+  const part = await call('GET', clip.data.path.replace('/api', ''), { headers: { Range: 'bytes=0-99' } });
+  check('videos play in parts (Safari needs this)', part.status === 206 && part.headers.get('content-range') === `bytes 0-99/${mp4.length}` && part.headers.get('content-type') === 'video/mp4', part.status);
+  const fuel = { amount: 500, litres: 4.8, odometerKm: 12345, pump: 'HP Andheri', video: clip.data.path, note: 'Full tank' };
+  refused('a top-up needs a video', await rider.post('/rider/fuel', { ...fuel, video: '' }), 400);
+  refused('a photo is not a video', await rider.post('/rider/fuel', { ...fuel, video: photoPath }), 400);
+  refused('a top-up needs an amount', await rider.post('/rider/fuel', { ...fuel, amount: 0 }), 400);
+  refused('a top-up needs litres', await rider.post('/rider/fuel', { ...fuel, litres: '' }), 400);
+  const topUp = await rider.post('/rider/fuel', fuel);
+  okIs('the rider sends a fuel top-up', topUp);
+  check('it waits for approval with its video', topUp.data.status === 'pending' && topUp.data.video.endsWith(clip.data.path), topUp.data);
+  refused('one video is used once', await rider.post('/rider/fuel', fuel), 400);
+  const fuelList = (await rider.get('/rider/fuel')).data;
+  check('the rider sees it and the month total', fuelList.topUps[0].id === topUp.data.id && fuelList.month.amount === 500 && fuelList.month.litres === 4.8, fuelList.month);
+  check('the panel sees it with a playable link', (await adminApi.get('/admin/bootstrap')).data.fuelTopUps.find((f) => f.id === topUp.data.id)?.video.startsWith('http'));
+  refused('a rejection needs a reason', await act('decideFuelTopUp', topUp.data.id, false, ''), 400);
+  okIs('staff approve it', await act('decideFuelTopUp', topUp.data.id, true, ''));
+  refused('a top-up is decided once', await act('decideFuelTopUp', topUp.data.id, false, 'No'), 400);
+  check('the rider sees it approved', (await rider.get('/rider/fuel')).data.topUps[0].status === 'approved');
+
   section('Rider reject and failed delivery');
   const rej = await dealerApi.post('/dealer/orders', orderBody(5, 'cashOnDelivery'));
   await act('assignRider', rej.data.id, riderId);
@@ -596,6 +620,31 @@ try {
   okIs('admin confirms it', await act('decideDeliveryRequest', dr.data.id, true));
   refused('a request is decided once', await act('decideDeliveryRequest', dr.data.id, true), 400);
   okIs('dealer removes it', await dealerApi.del(`/dealer/delivery-requests/${dr.data.id}`));
+
+  section('Factory pickups');
+  const plants = (await dealerApi.get('/dealer/factories')).data;
+  check('the dealer sees the active factories', plants.length > 0 && plants.every((f) => f.id && f.name && 'loadingHours' in f), plants[0]);
+  const pickProduct = (await dealerApi.get('/dealer/products')).data[0];
+  const pickupBody = { factoryId: plants[0].id, productId: pickProduct.id, quantity: 20, date: tomorrow, slot: SLOT, notes: 'Own tempo' };
+  refused('a pickup needs a slot', await dealerApi.post('/dealer/factory-pickups', { ...pickupBody, slot: '' }), 400);
+  refused('a pickup needs a quantity', await dealerApi.post('/dealer/factory-pickups', { ...pickupBody, quantity: 0 }), 400);
+  refused('a pickup needs a real factory', await dealerApi.post('/dealer/factory-pickups', { ...pickupBody, factoryId: 'nope' }), 400);
+  refused('a past pickup date is refused', await dealerApi.post('/dealer/factory-pickups', { ...pickupBody, date: dayjs().subtract(2, 'day').toISOString() }), 400);
+  const fp = await dealerApi.post('/dealer/factory-pickups', pickupBody);
+  okIs('book a factory pickup', fp);
+  check('it keeps the date, slot and quantity', fp.data.status === 'requested' && fp.data.slot === SLOT && fp.data.quantity === 20 && fp.data.factoryName === plants[0].name, fp.data);
+  check('pickup list', (await dealerApi.get('/dealer/factory-pickups')).data.some((p) => p.id === fp.data.id));
+  check('the panel sees it', (await adminApi.get('/admin/bootstrap')).data.factoryPickups.some((p) => p.id === fp.data.id));
+  refused('collected needs a confirmation first', await act('updateFactoryPickup', fp.data.id, 'collected', ''), 400);
+  okIs('staff confirm it', await act('updateFactoryPickup', fp.data.id, 'confirmed', ''));
+  okIs('and mark it collected', await act('updateFactoryPickup', fp.data.id, 'collected', ''));
+  refused('a collected pickup can not be cancelled', await dealerApi.del(`/dealer/factory-pickups/${fp.data.id}`), 400);
+  const fp2 = await dealerApi.post('/dealer/factory-pickups', { ...pickupBody, quantity: 5 });
+  okIs('the dealer cancels another one', await dealerApi.del(`/dealer/factory-pickups/${fp2.data.id}`));
+  refused('a cancelled pickup is closed for staff', await act('updateFactoryPickup', fp2.data.id, 'confirmed', ''), 400);
+  const fp3 = await dealerApi.post('/dealer/factory-pickups', { ...pickupBody, quantity: 7 });
+  okIs('staff decline one with a reason', await act('updateFactoryPickup', fp3.data.id, 'declined', 'Factory closed'));
+  check('the dealer sees why', (await dealerApi.get('/dealer/factory-pickups')).data.find((p) => p.id === fp3.data.id).staffNote === 'Factory closed');
 
   section('Notifications');
   for (const [label, client, root] of [['dealer', dealerApi, '/dealer'], ['rider', rider, '/rider']]) {
@@ -793,11 +842,15 @@ try {
   check('and only once a day', (await cronOf()).data.subscriptions === 0);
   okIs('cancel subscription', await c.del(`/customer/subscriptions/${sub.data.id}`));
   refused('an enquiry needs a quantity', await c.post('/customer/enquiries', { eventType: 'Wedding', date: tomorrow, location: 'Andheri' }), 400);
-  const enq = await c.post('/customer/enquiries', { eventType: 'Wedding', date: tomorrow, quantityKg: 200, location: 'Andheri', notes: 'Evening' });
+  refused('an enquiry slot has to be a real slot', await c.post('/customer/enquiries', { eventType: 'Wedding', date: tomorrow, slot: '2 AM', quantityKg: 200, location: 'Andheri' }), 400);
+  refused('an enquiry date can not have passed', await c.post('/customer/enquiries', { eventType: 'Wedding', date: dayjs().subtract(2, 'day').toISOString(), slot: SLOT, quantityKg: 200, location: 'Andheri' }), 400);
+  const enq = await c.post('/customer/enquiries', { eventType: 'Wedding', date: tomorrow, slot: SLOT, quantityKg: 200, location: 'Andheri', notes: 'Evening' });
   okIs('bulk enquiry', enq);
+  check('the enquiry keeps its time slot', enq.data.slot === SLOT, enq.data);
+  okIs('an older app without a slot still works', await c.post('/customer/enquiries', { eventType: 'Party', date: tomorrow, quantityKg: 50, location: 'Worli' }));
   refused('a quote needs text', await act('quoteEnquiry', enq.data.id, ''), 400);
   okIs('admin quotes', await act('quoteEnquiry', enq.data.id, '₹5 per kg'));
-  check('the customer sees the quote', (await c.get('/customer/enquiries')).data[0].quote === '₹5 per kg');
+  check('the customer sees the quote', (await c.get('/customer/enquiries')).data.find((e) => e.id === enq.data.id).quote === '₹5 per kg');
 
   section('Customer notifications and tickets');
   const notes = (await c.get('/customer/notifications')).data;

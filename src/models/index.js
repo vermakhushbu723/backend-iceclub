@@ -27,6 +27,8 @@ export { StandingOrder } from './StandingOrder.js';
 export { IceBoxMovement } from './IceBoxMovement.js';
 export { IceBoxPickup } from './IceBoxPickup.js';
 export { DeliveryRequest } from './DeliveryRequest.js';
+export { FactoryPickup } from './FactoryPickup.js';
+export { FuelTopUp } from './FuelTopUp.js';
 export { Ticket } from './Ticket.js';
 export { Wallet } from './Wallet.js';
 export { PointsRedemption } from './PointsRedemption.js';
