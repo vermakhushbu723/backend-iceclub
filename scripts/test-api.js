@@ -630,6 +630,12 @@ try {
   refused('a pickup needs a quantity', await dealerApi.post('/dealer/factory-pickups', { ...pickupBody, quantity: 0 }), 400);
   refused('a pickup needs a real factory', await dealerApi.post('/dealer/factory-pickups', { ...pickupBody, factoryId: 'nope' }), 400);
   refused('a past pickup date is refused', await dealerApi.post('/dealer/factory-pickups', { ...pickupBody, date: dayjs().subtract(2, 'day').toISOString() }), 400);
+  const pickupSlots = (await dealerApi.get('/dealer/factory-pickups/slots')).data;
+  check('pickup slots cover all 24 hours', pickupSlots.length === 8 && pickupSlots[0].start === 0 && pickupSlots.at(-1).end === 24, pickupSlots);
+  refused('a delivery-only slot name is not a pickup slot', await dealerApi.post('/dealer/factory-pickups', { ...pickupBody, slot: '6 AM - 8 AM' }), 400);
+  const night = await dealerApi.post('/dealer/factory-pickups', { ...pickupBody, slot: '12 AM - 3 AM', quantity: 3 });
+  okIs('a night pickup can be booked, the factory runs all day', night);
+  okIs('and cancelled', await dealerApi.del(`/dealer/factory-pickups/${night.data.id}`));
   const fp = await dealerApi.post('/dealer/factory-pickups', pickupBody);
   okIs('book a factory pickup', fp);
   check('it keeps the date, slot and quantity', fp.data.status === 'requested' && fp.data.slot === SLOT && fp.data.quantity === 20 && fp.data.factoryName === plants[0].name, fp.data);
